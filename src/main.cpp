@@ -8,6 +8,7 @@
 #define beepPin D6 // Beep
 
 #define WAIT_TIME 500
+#define DETECT_RANGE 100
 
 #define SCREEN_WIDTH 128       // OLED display width, in pixels
 #define SCREEN_HEIGHT 64       // OLED display height, in pixels
@@ -112,16 +113,24 @@ void render()
     display.clearDisplay();
     display.setTextColor(WHITE);
 
-    display.setTextSize(2); // Draw 2X-scale text
-    display.setCursor(0, 0);
-    display.printf("%d/%d", (int)(lasttime / 1000), (int)((millis() - start) / 1000));
-    display.setTextSize(4); // Draw 5X-scale text
-    display.setCursor(50, 30);
+    if(counter > 0)
+    {
+        display.setTextSize(2);
+        display.setCursor(0, 0);
+        display.printf("%d/%d", (int)(lasttime / 1000), (int)((millis() - start) / 1000));
+    }
+
+    display.setTextSize(4);
+    display.setCursor(50, 25);
     display.print(counter);
 
-    display.setCursor(0, 54);
-    display.setTextSize(1);
-    display.print((int)range);
+    // display.setCursor(0, 54);
+    // display.setTextSize(1);
+    // display.print((int)range);
+
+
+    display.drawFastHLine(0,62,(int)(range/2), WHITE);
+    display.drawFastVLine(DETECT_RANGE/2,61,3, WHITE);
 
     display.display();
 }
@@ -132,7 +141,7 @@ void lidar()
     range = vl.readRange();
     uint8_t status = vl.readRangeStatus();
 
-    bool triggered = (status == VL6180X_ERROR_NONE) && range < 100;
+    bool triggered = (status == VL6180X_ERROR_NONE) && range < DETECT_RANGE;
 
     if (triggered != lastTriggered) // edge detect - need to debounce as well
     {
@@ -145,8 +154,8 @@ void lidar()
         }
         else if ((millis() - timeout) > WAIT_TIME) // make sure we are triggered for more than WAIT_TIME before incrementing the counter
         {
-            ++counter;
-            lasttime = millis() - start;
+            if( counter++ > 0)
+                lasttime = millis() - start;
             start = millis();
             Beep(150, 1);
         }
