@@ -4,11 +4,13 @@
 #include <Adafruit_SSD1306.h>
 #include "Adafruit_VL6180X.h"
 
-#define touchPin D5
-#define beepPin D6 // Beep
+#define touchPin1 D5
+#define touchPin2 D6
+#define beepPin D7 // Beep
 
 #define WAIT_TIME 500
 #define DETECT_RANGE 100
+#define MAX_LAPS 100
 
 #define SCREEN_WIDTH 128       // OLED display width, in pixels
 #define SCREEN_HEIGHT 64       // OLED display height, in pixels
@@ -22,9 +24,11 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &wire, OLED_RESET);
 float range = 0;
 int counter = 0;
 bool lastTriggered = false;
+bool wide = true;
 unsigned long timeout = 0;
 unsigned long start = 0;
 unsigned long lasttime = 0;
+static unsigned char Laps[MAX_LAPS];
 
 //----------------------------------------------------------------
 void Beep(int ms, int repeat)
@@ -43,16 +47,16 @@ void Beep(int ms, int repeat)
 //----------------------------------------------------------------
 void setup()
 {
-    pinMode(touchPin, INPUT);
+    pinMode(touchPin1, INPUT);
+    pinMode(touchPin2, INPUT);
+    pinMode(beepPin, OUTPUT);
 
     wire.begin(0, 2);
 
     Serial.begin(115200);
     // wait for serial port to open on native usb devices
     while (!Serial)
-    {
         delay(1);
-    }
 
     // scan for I2C device
     // Serial.println();
@@ -77,8 +81,6 @@ void setup()
     // Serial.print("Found ");
     // Serial.print(count, DEC);
     // Serial.println(" device(s).");
-
-    pinMode(beepPin, OUTPUT);
 
     Beep(100, 2);
 
@@ -108,27 +110,66 @@ void setup()
 }
 
 //----------------------------------------------------------------
-void render()
+void renderTall()
 {
+    display.setRotation(3);
     display.clearDisplay();
     display.setTextColor(WHITE);
 
-    if(counter > 0)
-    {
-        display.setTextSize(2);
-        display.setCursor(0, 0);
-        display.printf("%d/%d", (int)(lasttime / 1000), (int)((millis() - start) / 1000));
-    }
+    // calculate total lap time.
+    unsigned int total = 0;
+    for(int i = 0; i < MAX_LAPS; ++i)
+        total += Laps[i];
 
+    int secs = min(255, (int)((millis() - start) / 1000));
+
+    display.setTextSize(2);
+    display.setCursor(0, 0);
+    if(counter > 0)
+        display.printf("%d\n\n%d", total, secs);
+    else
+        display.print("Ready");
+
+    // lap counter
+    display.setCursor(5, 60);
+    display.print("Laps");
     display.setTextSize(4);
-    display.setCursor(50, 25);
+    display.setCursor(5, 90);
     display.print(counter);
 
-    // display.setCursor(0, 54);
-    // display.setTextSize(1);
-    // display.print((int)range);
+    // distance bar
+    display.drawFastVLine(62,0, (int)(range/2), WHITE);
+    display.drawFastHLine(61,DETECT_RANGE/2,3, WHITE);
 
+    display.display();
+}
+//----------------------------------------------------------------
+void renderWide()
+{
+    display.setRotation(0);
+    display.clearDisplay();
+    display.setTextColor(WHITE);
 
+    // calculate total lap time.
+    unsigned int total = 0;
+    for(int i = 0; i < MAX_LAPS; ++i)
+        total += Laps[i];
+
+    int secs = min(255, (int)((millis() - start) / 1000));
+
+    display.setTextSize(2);
+    display.setCursor(0, 0);
+    if(counter > 0)
+        display.printf("Total %d\n\n%d", total, secs);
+    else
+        display.print("Ready...");
+
+    // lap counter
+    display.setTextSize(4);
+    display.setCursor(75, 25);
+    display.print(counter);
+
+    // distance bar
     display.drawFastHLine(0,62,(int)(range/2), WHITE);
     display.drawFastVLine(DETECT_RANGE/2,61,3, WHITE);
 
@@ -155,7 +196,11 @@ void lidar()
         else if ((millis() - timeout) > WAIT_TIME) // make sure we are triggered for more than WAIT_TIME before incrementing the counter
         {
             if( counter++ > 0)
+            {
                 lasttime = millis() - start;
+                if( counter < MAX_LAPS)
+                    Laps[counter - 1] = (unsigned char)(lasttime / 1000);
+            }
             start = millis();
             Beep(150, 1);
         }
@@ -166,13 +211,42 @@ void lidar()
     }
 }
 
+
+
+//----------------------------------------------------------------
+void reset()
+{
+    Beep(50,1);
+
+    counter = 0;
+    lasttime = 0;
+    start = millis();
+
+    for(int i = 0; i < MAX_LAPS; ++i)
+        Laps[i] = 0;
+
+    wide = wide == false;
+}
+
 //----------------------------------------------------------------
 void touch()
 {
-    if (digitalRead(touchPin) == 1)
+    static unsigned int debounce1 = 0;
+    static unsigned int debounce2 = 0;
+
+    if (digitalRead(touchPin1) == 1)
     {
         if(counter > 0)
             counter = counter - 1;
+
+        if(counter == 0)
+            reset();
+    }
+
+    if (digitalRead(touchPin2) == 1)
+    {
+        if( counter < MAX_LAPS - 1)
+            counter = counter + 1;
 
         lasttime = 0;
         start = millis();
@@ -184,7 +258,11 @@ void loop()
 {
     touch();  // check the touch panel
     lidar();  // check the range sensor
-    render(); // display results
+
+    if(wide)
+        renderWide();
+    else
+        renderTall(); // display results
 
     delay(50);
 }
