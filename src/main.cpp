@@ -12,12 +12,13 @@
 #define touchPin2 D6
 #define beepPin D7 // Beep
 
-#define DETECT_RANGE    100
-#define MAX_LAPS        100
-#define WAIT_TIME_MS    500
-#define LONG_PRESS_MS   750
+#define DETECT_RANGE 100
+#define MAX_LAPS 100
+#define WAIT_TIME_MS 500
+#define LONG_PRESS_MS 750
 #define BUTTON_PRESS_MS 150
-#define SCREEN_TIMEOUT_MS   60 * 1000
+#define SCREEN_TIMEOUT_MS 60 * 1000
+#define RESET_TIMEOUT_MS 180 * 1000
 
 #define SCREEN_WIDTH 128       // OLED display width, in pixels
 #define SCREEN_HEIGHT 64       // OLED display height, in pixels
@@ -29,10 +30,9 @@ Adafruit_VL6180X vl;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &wire, OLED_RESET);
 
 //----------------------------------------------------------------
-unsigned long screenTime = 0;
-unsigned long updateTime = 0;
-bool wide = true;   // wide or tall display format
-unsigned long start = 0;
+bool wide = true; // wide or tall display format
+unsigned long idleTime = 0;
+unsigned long lapStart = 0;
 unsigned char Laps[MAX_LAPS];
 int lapCounter = 0;
 int lapTop = 0;
@@ -118,6 +118,7 @@ void setup()
     vl.begin(&wire);
 
     display.clearDisplay();
+    display.setRotation(2);
     display.setTextColor(WHITE);
     display.print("\nLattice Lap Counter\n\nVersion: " VERSION);
     display.display();
@@ -128,14 +129,14 @@ void setup()
 //----------------------------------------------------------------
 void renderTall(float range)
 {
-    display.setRotation(3);
+    display.setRotation(1);
 
     // calculate total lap time.
     unsigned int total = 0;
     for (int i = 0; i < MAX_LAPS; ++i)
         total += Laps[i];
 
-    int secs = min(255, (int)((millis() - start) / 1000));
+    int secs = min(255, (int)((millis() - lapStart) / 1000));
 
     display.setTextSize(2);
     display.setCursor(0, 0);
@@ -144,7 +145,7 @@ void renderTall(float range)
         TextAt(0, 0, 1, "Total Time ");
         TextAt(5, 14, 2, total);
 
-        if( lapCounter == lapTop)
+        if (lapCounter == lapTop)
         {
             TextAt(0, 34, 1, "Current");
             TextAt(5, 48, 2, secs);
@@ -159,8 +160,8 @@ void renderTall(float range)
         display.print("Ready");
 
     // lap counter
-    TextAt(0,75,1,"Lap");
-    TextAt(5,92,4,lapCounter);
+    TextAt(0, 75, 1, "Lap");
+    TextAt(5, 92, 4, lapCounter);
 
     // distance bar
     display.drawFastVLine(62, 0, (int)(range / 2), WHITE);
@@ -170,14 +171,14 @@ void renderTall(float range)
 //----------------------------------------------------------------
 void renderWide(float range)
 {
-    display.setRotation(0);
+    display.setRotation(2);
 
     // calculate total lap time.
     unsigned int total = 0;
     for (int i = 0; i < MAX_LAPS; ++i)
         total += Laps[i];
 
-    int secs = min(255, (int)((millis() - start) / 1000));
+    int secs = min(255, (int)((millis() - lapStart) / 1000));
 
     display.setCursor(0, 0);
     if (lapCounter > 0)
@@ -185,7 +186,7 @@ void renderWide(float range)
         TextAt(0, 3, 1, "Total Time ");
         TextAt(display.getCursorX(), 0, 2, total);
 
-        if( lapCounter == lapTop)
+        if (lapCounter == lapTop)
         {
             TextAt(0, 21, 1, "Current");
             TextAt(0, 36, 2, secs);
@@ -211,19 +212,34 @@ void renderWide(float range)
     display.drawFastHLine(0, 62, (int)(range / 2), WHITE);
     display.drawFastVLine(DETECT_RANGE / 2, 61, 3, WHITE);
 }
+
+//----------------------------------------------------------------
+void resetLaps()
+{
+    lapCounter = 0;
+    lapTop = 0;
+    // clear the lap counts
+    for (int i = 0; i < MAX_LAPS; ++i)
+        Laps[i] = 0;
+}
+
 //----------------------------------------------------------------
 void renderScreen(float range)
 {
     display.clearDisplay();
     display.setTextColor(WHITE);
 
-    if((millis() - screenTime) < SCREEN_TIMEOUT_MS)
+    if ((millis() - idleTime) < SCREEN_TIMEOUT_MS)
     {
         if (wide)
             renderWide(range);
         else
             renderTall(range); // display results
     }
+
+    // if nothing has happened for ages just reset Laps to start
+    if ((millis() - idleTime) > RESET_TIMEOUT_MS)
+        resetLaps();
 
     display.display();
 }
@@ -244,7 +260,7 @@ float lidar()
 
         if (triggered)
         {
-            screenTime = millis();   // keep the screen awake
+            idleTime = millis(); // keep the screen awake
             _startWait = millis();
             Beep(50, 1);
         }
@@ -253,21 +269,16 @@ float lidar()
             // we have a valid trigger event
             if (lapCounter > 0)
             {
-                unsigned long laptime = millis() - start;
+                unsigned long laptime = millis() - lapStart;
 
                 if (lapCounter < MAX_LAPS)
                     Laps[lapCounter] = (unsigned char)(laptime / 1000); // record the lap time
             }
 
-            if(lapCounter == 0)
-            {
-                lapTop = 0;
-                // clear the lap counts
-                for (int i = 0; i < MAX_LAPS; ++i)
-                    Laps[i] = 0;
-            }
+            if (lapCounter == 0)    // reset the lap counts
+                resetLaps();
 
-            start = millis();   // start the lap timer
+            lapStart = millis(); // start the lap timer
             ++lapCounter;
             ++lapTop;
 
@@ -291,27 +302,27 @@ void touch()
 
     if (digitalRead(touchPin1) == 1)
     {
-        screenTime = millis();   // keep the screen awake
+        idleTime = millis(); // keep the screen awake
 
-        if( buttonDown1 == 0)
+        if (buttonDown1 == 0)
             buttonDown1 = millis();
 
-        if((millis() - buttonDown1) >= BUTTON_PRESS_MS)    // check for short press
+        if ((millis() - buttonDown1) >= BUTTON_PRESS_MS) // check for short press
         {
             if (lapCounter > 0)
                 lapCounter = lapCounter - 1;
             buttonDown1 = 0;
         }
 
-        if(lapCounter == 0)
+        if (lapCounter == 0)
         {
-            if( buttonDown1a == 0)
+            if (buttonDown1a == 0)
                 buttonDown1a = millis();
 
-            if((millis() - buttonDown1a) > LONG_PRESS_MS)    // check for long press
+            if ((millis() - buttonDown1a) > LONG_PRESS_MS) // check for long press
             {
-                wide = ! wide;
-                Beep(75,1);
+                wide = !wide;
+                Beep(75, 1);
                 buttonDown1a = 0;
             }
         }
@@ -325,15 +336,15 @@ void touch()
     // check the second touch panel
     if (digitalRead(touchPin2) == 1)
     {
-        screenTime = millis();   // keep the screen awake
+        idleTime = millis(); // keep the screen awake
 
-        if( buttonDown2 == 0)
+        if (buttonDown2 == 0)
             buttonDown2 = millis();
 
-        if((millis() - buttonDown2) >= BUTTON_PRESS_MS)    // check for short press
+        if ((millis() - buttonDown2) >= BUTTON_PRESS_MS) // check for short press
         {
-        if (lapCounter < lapTop)    // limit to the last lap index
-            lapCounter = lapCounter + 1;
+            if (lapCounter < lapTop) // limit to the last lap index
+                lapCounter = lapCounter + 1;
             buttonDown2 = 0;
         }
     }
@@ -344,9 +355,11 @@ void touch()
 //----------------------------------------------------------------
 void loop()
 {
+    static unsigned long updateTime = 0;
+
     touch(); // check the touch panel
 
-    if(( millis() - updateTime) > 75)   // update lidar and screen periodically
+    if ((millis() - updateTime) > 75) // update lidar and screen periodically
     {
         float range = lidar(); // check the range sensor
 
