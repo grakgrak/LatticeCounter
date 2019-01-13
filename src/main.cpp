@@ -4,30 +4,41 @@
 #include <Arduino.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include "Adafruit_VL6180X.h"
+//#include <rom/rtc.h>
 
-#define VERSION "0.10"
+#define VERSION "0.11"
+#define TASK_STACK_SIZE 3000
 
-#define touchPin1 D5
-#define touchPin2 D6
+#define touchPinDn D6
+#define touchPinUp D5
 #define beepPin D7 // Beep
 
-#define DETECT_RANGE 100
+#define DETECT_RANGE 120
 #define MAX_LAPS 100
-#define WAIT_TIME_MS 500
+#define WAIT_TIME_MS 650
 #define LONG_PRESS_MS 750
 #define BUTTON_PRESS_MS 150
-#define SCREEN_TIMEOUT_MS 60 * 1000
+#define SCREEN_TIMEOUT_MS 90 * 1000
 #define RESET_TIMEOUT_MS 180 * 1000
 
 #define SCREEN_WIDTH 128       // OLED display width, in pixels
 #define SCREEN_HEIGHT 64       // OLED display height, in pixels
 #define OLED_RESET LED_BUILTIN // Reset pin # (or -1 if sharing Arduino reset pin)
 
+#define _VL6180X_
+
 //----------------------------------------------------------------
 TwoWire wire;
-Adafruit_VL6180X vl;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &wire, OLED_RESET);
+
+//----------------------------------------------------------------
+#ifdef _VL6180X_
+#include "Adafruit_VL6180X.h"
+Adafruit_VL6180X vl;
+#else
+#include "Adafruit_VL53L0X.h"
+Adafruit_VL53L0X vl = Adafruit_VL53L0X();
+#endif
 
 //----------------------------------------------------------------
 bool wide = true; // wide or tall display format
@@ -36,15 +47,17 @@ unsigned long lapStart = 0;
 unsigned char Laps[MAX_LAPS];
 int lapCounter = 0;
 int lapTop = 0;
+//TaskHandle_t _beepHandle;
 
 //----------------------------------------------------------------
 void Beep(int ms, int repeat)
 {
     while (repeat-- > 0)
     {
-        digitalWrite(beepPin, LOW);
-        delay(ms);
-        digitalWrite(beepPin, HIGH);
+        //tone(beepPin,2700, ms);
+         digitalWrite(beepPin, LOW);
+         delay(ms);
+         digitalWrite(beepPin, HIGH);
 
         if (repeat > 0)
             delay(ms);
@@ -65,11 +78,22 @@ void TextAt(int x, int y, int size, int val)
     display.setTextSize(size);
     display.printf("%d", val);
 }
+
+//--------------------------------------------------------------------
+// void beepTask(void *pvParameters)
+// {
+//     for (;;)
+//     {
+//         Beeper.loop();
+//         vTaskDelay(1); // 1 ms delay
+//     }
+//     vTaskDelete(NULL); // should never get here
+// }
 //----------------------------------------------------------------
 void setup()
 {
-    pinMode(touchPin1, INPUT);
-    pinMode(touchPin2, INPUT);
+    pinMode(touchPinDn, INPUT);
+    pinMode(touchPinUp, INPUT);
     pinMode(beepPin, OUTPUT);
 
     wire.begin(5, 4);
@@ -78,6 +102,8 @@ void setup()
     // wait for serial port to open on native usb devices
     while (!Serial)
         delay(1);
+
+//    xTaskCreate(beepTask, "Beeper", TASK_STACK_SIZE, NULL, uxTaskPriorityGet(NULL), &_beepHandle);
 
     // scan for I2C device
     // Serial.println();
@@ -114,8 +140,12 @@ void setup()
         } // Don't proceed, loop forever
     }
 
+#ifdef _VL6180X_
     wire.setClock(400000);
     vl.begin(&wire);
+#else
+    vl.begin();
+#endif
 
     display.clearDisplay();
     display.setRotation(2);
@@ -249,10 +279,24 @@ float lidar()
     static bool _lastTriggered = false;
     static unsigned long _startWait = 0;
 
+#ifdef _VL6180X_
     float range = vl.readRange();
     uint8_t status = vl.readRangeStatus();
 
     bool triggered = (status == VL6180X_ERROR_NONE) && range < DETECT_RANGE;
+#else
+    VL53L0X_RangingMeasurementData_t measure;
+    vl.getSingleRangingMeasurement(&measure, false);
+
+    float range = measure.RangeMilliMeter;
+
+    bool triggered = (measure.RangeStatus == 0) && range < DETECT_RANGE;
+
+    if( measure.RangeStatus != 0)
+        range = 9999;
+
+    Serial.println(range);
+#endif
 
     if (triggered != _lastTriggered) // edge detect - need to debounce as well
     {
@@ -300,7 +344,7 @@ void touch()
     static unsigned long buttonDown1a = 0;
     static unsigned long buttonDown2 = 0;
 
-    if (digitalRead(touchPin1) == 1)
+    if (digitalRead(touchPinDn) == 1)
     {
         idleTime = millis(); // keep the screen awake
 
@@ -334,7 +378,7 @@ void touch()
     }
 
     // check the second touch panel
-    if (digitalRead(touchPin2) == 1)
+    if (digitalRead(touchPinUp) == 1)
     {
         idleTime = millis(); // keep the screen awake
 
@@ -367,4 +411,6 @@ void loop()
 
         updateTime = millis();
     }
+
+    delay(25);
 }
